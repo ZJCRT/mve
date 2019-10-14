@@ -40,6 +40,7 @@ struct NVMCameraInfo
     float radial_distortion;
 };
 
+
 /**
  * Loads an NVM bundle file while providing NVM specific information.
  * Docs: http://homes.cs.washington.edu/~ccwu/vsfm/doc.html#nvm
@@ -51,6 +52,20 @@ struct NVMCameraInfo
 Bundle::Ptr
 load_nvm_bundle (std::string const& filename,
     std::vector<NVMCameraInfo>* camera_info = nullptr);
+
+/* ------------------- Support for apollo calibration file ------------------- */
+/**
+ * Loads an apollo13 calibration file while providing filename for every camera
+ *
+ * This function provides a bundle with cameras where the focal length is in
+ * VisualSFM conventions, NOT MVE conventions. To convert to focal length to
+ * MVE conventions, it must be divided by the maximum image dimension.
+ */
+Bundle::Ptr
+load_apollo_bundle(std::string const& filename,
+                   std::vector<NVMCameraInfo>* camera_info);
+
+
 
 /* ------------------ Support for Noah's Bundler  ----------------- */
 

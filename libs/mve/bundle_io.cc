@@ -19,6 +19,7 @@
 #include "math/matrix.h"
 #include "math/vector.h"
 #include "mve/bundle_io.h"
+#include "json.hpp"
 
 MVE_NAMESPACE_BEGIN
 
@@ -62,6 +63,90 @@ namespace
         return rot;
     }
 }  // namespace
+
+
+Bundle::Ptr
+load_apollo_bundle(std::string const& filename,
+                   std::vector<NVMCameraInfo>* camera_info)
+{
+    nlohmann::json calibration_json;
+    {
+        // read a JSON file
+        std::ifstream in(filename);
+        if (!in.good())
+            throw util::FileException(filename, std::strerror(errno));
+        in >> calibration_json;
+    }
+
+    int num_views = calibration_json.size();
+    if (num_views < 0 || num_views > 10000)
+        throw util::Exception("Invalid number of views: ",
+            util::string::get(num_views));
+
+    /* Create new bundle and prepare NVM specific output. */
+    Bundle::Ptr bundle = Bundle::create();
+    Bundle::Cameras& bundle_cams = bundle->get_cameras();
+    bundle_cams.reserve(num_views);
+    std::vector<NVMCameraInfo> nvm_cams;
+    nvm_cams.reserve(num_views);
+
+    /* Read views. */
+    std::cout << "NVM: Number of views: " << num_views << std::endl;
+    std::string nvm_path = util::fs::dirname(filename);
+    for (const auto &element : calibration_json.items()) {
+
+        const nlohmann::json intrinsics = element.value()["cameraIntrinsics"];
+        const nlohmann::json extrinsics = element.value()["cameraExtrinsics"];
+        const nlohmann::json dims = element.value()["imageResolution"];
+
+        NVMCameraInfo nvm_cam;
+        CameraInfo bundle_cam;
+
+        nvm_cam.filename = element.key();
+        /* If the filename is not absolute, make relative to NVM. */
+        if (!util::fs::is_absolute(nvm_cam.filename))
+            nvm_cam.filename = util::fs::join_path(nvm_path, nvm_cam.filename);
+
+        bundle_cam.flen = intrinsics["focalLengthY"].get<float>();
+        bundle_cam.paspect =  intrinsics["focalLengthY"].get<float>() / intrinsics["focalLengthX"].get<float>();
+        bundle_cam.ppoint[0] =  intrinsics["principalPointX"].get<float>() / dims["width"].get<float>();
+        bundle_cam.ppoint[1] =  intrinsics["principalPointY"].get<float>() / dims["height"].get<float>();
+
+        math::Matrix3f temp_rot;
+        math::Vec3f temp_pos;
+        temp_rot(0, 0) = extrinsics[0][0].get<float>();
+        temp_rot(1, 0) = extrinsics[0][1].get<float>();
+        temp_rot(2, 0) = extrinsics[0][2].get<float>();
+        temp_rot(0, 1) = extrinsics[1][0].get<float>();
+        temp_rot(1, 1) = extrinsics[1][1].get<float>();
+        temp_rot(2, 1) = extrinsics[1][2].get<float>();
+        temp_rot(0, 2) = extrinsics[2][0].get<float>();
+        temp_rot(1, 2) = extrinsics[2][1].get<float>();
+        temp_rot(2, 2) = extrinsics[2][2].get<float>();
+        float w = extrinsics[3][3].get<float>();
+        temp_pos(0) = extrinsics[0][3].get<float>() / w;
+        temp_pos(1) = extrinsics[1][3].get<float>() / w;
+        temp_pos(2) = extrinsics[2][3].get<float>() / w;
+
+        math::Vec3f trans = temp_rot * -temp_pos;
+        std::copy(temp_rot.begin(), temp_rot.end(), bundle_cam.rot);
+        std::copy(trans.begin(), trans.end(), bundle_cam.trans);
+
+        /* Radial distortion. */
+        bundle_cam.dist[0] = 0.0f;
+        bundle_cam.dist[1] = 0.0f;
+        nvm_cam.radial_distortion = 0.0f;
+
+
+        bundle_cams.push_back(bundle_cam);
+        nvm_cams.push_back(nvm_cam);
+    }
+
+    if (camera_info != nullptr)
+        std::swap(*camera_info, nvm_cams);
+
+    return bundle;
+}
 
 Bundle::Ptr
 load_nvm_bundle (std::string const& filename,
